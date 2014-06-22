@@ -354,23 +354,118 @@ cpi = read.csv(&quot;bls-cpi-1950-2013.csv&quot;, skip = 13, colClasses = c(&quo
 # get last index
 last.cpi = tail(cpi, 1)$Annual
 # calculate each row&#39;s inflation index
-adj.index = last.cpi/cpi[match(storm$YEAR, cpi$Year), &quot;Annual&quot;]
+adj.index = last.cpi/cpi[match(storm$BGN_DATE$year + 1900, cpi$Year), &quot;Annual&quot;]
+# apply them
 storm$nPROPDMG = floor(storm$nPROPDMG * adj.index)
+storm$nCROPDMG = floor(storm$nCROPDMG * adj.index)
 </code></pre>
 
-<pre><code>## Error: replacement has 0 rows, data has 902297
+<p>One last step would be to generate an aggregate dataset, with annual totals. That will be the dataset used in our analysis.</p>
+
+<pre><code class="r">storm.agg = aggregate(cbind(FATALITIES, INJURIES, nPROPDMG, nCROPDMG) ~ BGN_DATE$year + 
+    EVTYPE48 + STATE, data = storm, sum)
+names(storm.agg)[1] = &quot;YEAR&quot;
+storm.agg$YEAR = storm.agg$YEAR + 1900
 </code></pre>
 
-<pre><code class="r">storm$nCROPDMG = floor(storm$nCROPDMG * adj.index)
+<h2>Analysis</h2>
+
+<p>As mentioned in the NOAA&#39;s website, until 1992, only tornado, thunderstorm wind and hail events found their way into the database. Let&#39;s see what we have in our dataset.</p>
+
+<pre><code class="r">pre1993 = aggregate(cbind(FATALITIES, INJURIES, nPROPDMG, nCROPDMG) ~ EVTYPE48, 
+    data = storm.agg[storm.agg$YEAR &lt; 1993, ], sum)
+pre1993
 </code></pre>
 
-<pre><code>## Error: replacement has 0 rows, data has 902297
+<pre><code>##            EVTYPE48 FATALITIES INJURIES  nPROPDMG nCROPDMG
+## 1              Hail          5      401 0.000e+00        0
+## 2 Thunderstorm Wind        263     3326 0.000e+00        0
+## 3           Tornado       4012    68036 1.147e+11        0
 </code></pre>
 
-<ul>
-<li><code>PROPDMG</code> and <code>CROPDMG</code> are not adjusted for inflation: 
-## Results</li>
-</ul>
+<p>As we can see, until 1992, property damages related to &#39;Tornado&#39; events amount to   $114.7 billion. This is more than 19% of total property damages of all event types in the whole period. Tornado pre-1993 data also represents 26.5% of all fatalities and 48% of all injuries.</p>
+
+<pre><code class="r">metrics = c(&quot;FATALITIES&quot;, &quot;INJURIES&quot;, &quot;nPROPDMG&quot;, &quot;nCROPDMG&quot;)
+pre1993[pre1993$EVTYPE48 == &quot;Tornado&quot;, metrics]/colSums(storm.agg[metrics])
+</code></pre>
+
+<pre><code>##   FATALITIES INJURIES nPROPDMG nCROPDMG
+## 3     0.2652   0.4844   0.1909        0
+</code></pre>
+
+<p>Any attempt of making an unbiased analysis should leave pre-1993 data out. That&#39;s what we&#39;re going to do.</p>
+
+<pre><code class="r">storm.agg.93 = subset(storm.agg, YEAR &gt;= 1993)
+</code></pre>
+
+<h3>Analyzing events harmful to population health</h3>
+
+<p>Now, we start to analyze the type of events most harmful to population health, according to 1993-forward storm data.</p>
+
+<pre><code class="r">harmful = aggregate(cbind(FATALITIES, INJURIES) ~ EVTYPE48, data = storm.agg.93, 
+    sum)
+# ordering by FATALITIES and INJURIES
+most.harmful.5 = lapply(c(&quot;FATALITIES&quot;, &quot;INJURIES&quot;), function(n) harmful[order(harmful[n], 
+    decreasing = TRUE)[1:5], c(&quot;EVTYPE48&quot;, n)])
+most.harmful.5
+</code></pre>
+
+<pre><code>## [[1]]
+##          EVTYPE48 FATALITIES
+## 12 Excessive Heat       2016
+## 40        Tornado       1643
+## 20           Heat       1161
+## 14    Flash Flood       1065
+## 29      Lightning        817
+## 
+## [[2]]
+##             EVTYPE48 INJURIES
+## 40           Tornado    23303
+## 15             Flood     6794
+## 12    Excessive Heat     6680
+## 39 Thunderstorm Wind     6231
+## 29         Lightning     5232
+</code></pre>
+
+<p>We can see that, in the period including and after 1993, &#39;Tornado&#39; was the event that caused more injuries, as most of us would pehaps expect.</p>
+
+<p>What came as a surprise is that &#39;Excessive Heat&#39; caused more fatalities in the same period (followed by &#39;Tornado&#39; events). If we add to this number those &#39;Heat&#39;-caused fatalities (first list&#39;s  3rd line), we&#39;ll have more than 3,100 heat-related fatalities, almost twice as much as &#39;Tornado&#39; fatalities.</p>
+
+<p>Let&#39;s investigate this a little further.</p>
+
+<pre><code class="r">heat.related = storm.agg.93$EVTYPE48 == &quot;Excessive Heat&quot; | storm.agg.93$EVTYPE48 == 
+    &quot;Heat&quot;
+
+library(ggplot2)
+ggplot(storm.agg.93[heat.related, ], aes(x = as.factor(YEAR), y = FATALITIES)) + 
+    geom_bar(stat = &quot;identity&quot;, fill = &quot;darkolivegreen3&quot;) + labs(title = &quot;Heat-related fatalities (1993-2011)&quot;, 
+    x = &quot;Year&quot;, y = expression(&quot;Fatalities&quot;)) + guides(fill = FALSE) + theme_minimal() + 
+    theme(plot.title = element_text(size = 18, face = &quot;bold&quot;), panel.grid.major.x = element_blank(), 
+        panel.grid.minor.x = element_blank())
+</code></pre>
+
+<p><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAogAAAH4CAMAAAD+XezUAAAAjVBMVEUAAAAAADoAAGYAOmYAOpAAZrY6AAA6ADo6AGY6OmY6OpA6ZrY6kLY6kNtmAABmADpmAGZmOgBmOjpmOpBmZmZmtv+QOgCQOjqQOmaQZpCQkLaQtpCQ2/+izVq2ZgC2Zjq2tma2/7a2///bkDrbtmbb/7bb/9vb///l5eX6+vr/tmb/25D//7b//9v///9oQ2xSAAAACXBIWXMAAAsSAAALEgHS3X78AAARsElEQVR4nO2cDXubyBVGSWptt2lJsm3wpq2rbU23TrDF//95BQaYGQYQEiC9kHMePxj7Mne+jgYQtqIcQIDo3g0AKEFEkAARQQJEBAkQESRARJAAEUECRAQJEBEkQESQABFBAkQECRARJEBEkAARQQJEBAkQESRARJBgHyIeo4eX4tvpMToMHZK9fz5b/szBadT++hhFUTxcoMpnklaRbv4ubx9N+def3j2Z71Fdom+vrrJoQpSY0lHbsiZDs9dkludHEdGRaLj8mYPtr60E/QWsiCZyTsTUtLswqtKoSl8VtHulh5FTTVpFyleDG2ky2L2j94LRBRGd8mcOdkVs1p3+AjbfeL01RbuT3FhX5q26UegVO3tFyvfPZq+i8OxQhovsZWXFj7GTwdnLzrwGVNijiMW35sSZmlWj+k0zI8Wk/eWxnCV7nCnfPdjJU646cSvVsV6CugXqn+2K+L86YvI7+Y7ekppViavSpTxFZYnJYfcq05wXWlYVL18QxsG0rb/Sz+4VYWfp1mWHIppTlVWrmPyuiNUPznHHdhqdg524OUNGHRG7BezZsldEm88UsCY2r4ND5oiYmiUwcVbVLOpIlRbHm2My88KoMzh7Y9fNSuxFxIbqfGVmPTargZkJ5xRZXz05xzVrjnewEzenwCzyT83dAs7PfdeITr7KneLw+pVRu5ImeeatiI1kx/p0e4w613tVikbE4pg2g7N39vpUhP2JaCbGnKtys5i1QlRUl1e5d9yx52AnXl+bHcNrxG72+uc+Ef187jJVX+C1eRu/qtNuvZebM7t3wXmqLjAcEd2WtXuTrlLvzy5FbM+j9Sm1EaI6KT/8bubdPa5ypnOwE28d8kXsFHB+HhCxyVefmpuVqk7f5m0SFft2r6RaVE0n6kvOJD8rYvfGSpS9iGivEZvrOSNQlJhTYiiic1wrinuwn6dHxG4B5+c+Ed366uvR2sRAxOoq4N+N3PVeE29ErD3MnWvEHBHvjCuinVYzO/5VnLciJm757sFOvP/U3C3g/Dxyam6xb/mFIpak7YqZeleCtYjmvJw3J3Z7JRKKyKn5ZrgimjuL6kKwusvMovBmJTYHN8c1K5Z3sBM3k969WekWcH4euFlx2hU7Teq5RjyYX3p7zf2OIW3vXJz3EblGvDN9b980K6A5kWWR+/ZNNWn2uGYu/YOdeOftm/au2Svwu/3ZimhSuW/fGMcrapPsOyztmy/Nidvu1U1wFunm6tF75hKKyF3zDel5Q7v6RfU+dNa8ed1dgOxxrSjewTZexQ7dm5VuAfuzFdFEnDe0Tb7Ulcqehe0q1txW270ye/CEr1lBe5752PcRN/GMbx8ibpw1L+N4sgKTqZ81rwLPmmE66XqP4fjrG5jOen81yN8jAlwCIoIEiAgSICJIgIggASKCBIgIEiAiSICIIAEiggSICBIgIkiAiCABIoIEiAgSICJIgIggASKCBIgIEtxBxH+NcPvWgAaICBIgIkiAiCABIoIEiAgSICJIgIggASKCBIgIEiAiSICIIAEiggSICBJcLuL3uYyJODs5bIXZIs6GFRFCEBEkQESQABFBAkQECRARJEBEkAARQQJEBAkQESRARJAAEUECRAQJEBEkQESQABFBAkQECRARJEBEkAARQQJEBAkQESRARJAAEUECRAQJEBEkQESQABFBAkQECRARJEBEkAARQQJEBAkQESRARJAAEUECRAQJEBEkQESQABFBAkQECRARJEBEkAARQQJEBAkQESRARJAAEUECRAQJEBEkGBTx9BhFcZ4fo3dPzXYhEBFCBkVMD4V/Sfbw0n4tVSUiQsiwiOVyGBfbt8/PZlseXfBtLmMizk4OW2GqiOWp+UucJvnp67PZLuU+KyKEjN6spN0VcREQEUIGRcwO+dunJ64R4TYMr4jHKEq4a4YbwfuIIAEiggSICBIgIkiAiCABIoIEiAgSICJIgIggASKCBIgIEiAiSICIIAEiggSICBIgIkiAiCABIoIEiAgSICJIgIggASKCBIgIEiAiSICIIAEiggSICBIgIkiAiCABIoIEiAgSICJIgIggASKCBIgIEiAiSICIIAEiggSICBIgIkiAiCABIoIEiAgSICJI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" alt="plot of chunk heatrelated"/> </p>
+
+<p>Look at the barplot above. Why is the number of 1995 heat-related fatalities so high? Let&#39;s check which states had more fatalities that year.</p>
+
+<pre><code class="r">states.heat = aggregate(FATALITIES ~ STATE, data = subset(storm.agg.93, heat.related &amp; 
+    YEAR == 1995), sum)
+states.heat = states.heat[order(states.heat$FATALITIES, decreasing = TRUE), 
+    ]
+head(states.heat, 5)
+</code></pre>
+
+<pre><code>##    STATE FATALITIES
+## 12    IL        626
+## 29    PA        198
+## 38    WI         67
+## 21    MO         34
+## 24    NJ         20
+</code></pre>
+
+<p>We can see that Illinois was the state with the greatest number of heat-related fatalities in 1995. Searching on the internet, we find that it corresponds to the so-called &ldquo;1995 Chicago heat wave&rdquo;. According to <a href="http://en.wikipedia.org/wiki/1995_Chicago_heat_wave">Wikipedia</a>, this heat wave &ldquo;led to approximately 750 heat-related deaths in Chicago over a period of five days. Most of the victims of the heatwave were elderly poor residents of the inner city, who could not afford air conditioning and did not open windows or sleep outside for fear of crime.&rdquo;</p>
+
+<h2>Results</h2>
 
 </body>
 

@@ -184,22 +184,134 @@ cpi = read.csv("bls-cpi-1950-2013.csv", skip = 13, colClasses = c("integer",
 # get last index
 last.cpi = tail(cpi, 1)$Annual
 # calculate each row's inflation index
-adj.index = last.cpi/cpi[match(storm$YEAR, cpi$Year), "Annual"]
+adj.index = last.cpi/cpi[match(storm$BGN_DATE$year + 1900, cpi$Year), "Annual"]
+# apply them
 storm$nPROPDMG = floor(storm$nPROPDMG * adj.index)
-```
-
-```
-## Error: replacement has 0 rows, data has 902297
-```
-
-```r
 storm$nCROPDMG = floor(storm$nCROPDMG * adj.index)
 ```
 
+
+One last step would be to generate an aggregate dataset, with annual totals. That will be the dataset used in our analysis.
+
+```r
+storm.agg = aggregate(cbind(FATALITIES, INJURIES, nPROPDMG, nCROPDMG) ~ BGN_DATE$year + 
+    EVTYPE48 + STATE, data = storm, sum)
+names(storm.agg)[1] = "YEAR"
+storm.agg$YEAR = storm.agg$YEAR + 1900
 ```
-## Error: replacement has 0 rows, data has 902297
+
+## Analysis
+As mentioned in the NOAA's website, until 1992, only tornado, thunderstorm wind and hail events found their way into the database. Let's see what we have in our dataset.
+
+```r
+pre1993 = aggregate(cbind(FATALITIES, INJURIES, nPROPDMG, nCROPDMG) ~ EVTYPE48, 
+    data = storm.agg[storm.agg$YEAR < 1993, ], sum)
+pre1993
+```
+
+```
+##            EVTYPE48 FATALITIES INJURIES  nPROPDMG nCROPDMG
+## 1              Hail          5      401 0.000e+00        0
+## 2 Thunderstorm Wind        263     3326 0.000e+00        0
+## 3           Tornado       4012    68036 1.147e+11        0
 ```
 
 
-* `PROPDMG` and `CROPDMG` are not adjusted for inflation: 
+As we can see, until 1992, property damages related to 'Tornado' events amount to   $114.7 billion. This is more than 19% of total property damages of all event types in the whole period. Tornado pre-1993 data also represents 26.5% of all fatalities and 48% of all injuries.
+
+```r
+metrics = c("FATALITIES", "INJURIES", "nPROPDMG", "nCROPDMG")
+pre1993[pre1993$EVTYPE48 == "Tornado", metrics]/colSums(storm.agg[metrics])
+```
+
+```
+##   FATALITIES INJURIES nPROPDMG nCROPDMG
+## 3     0.2652   0.4844   0.1909        0
+```
+
+
+Any attempt of making an unbiased analysis should leave pre-1993 data out. That's what we're going to do.
+
+
+```r
+storm.agg.93 = subset(storm.agg, YEAR >= 1993)
+```
+
+
+### Analyzing events harmful to population health
+Now, we start to analyze the type of events most harmful to population health, according to 1993-forward storm data.
+
+```r
+harmful = aggregate(cbind(FATALITIES, INJURIES) ~ EVTYPE48, data = storm.agg.93, 
+    sum)
+# ordering by FATALITIES and INJURIES
+most.harmful.5 = lapply(c("FATALITIES", "INJURIES"), function(n) harmful[order(harmful[n], 
+    decreasing = TRUE)[1:5], c("EVTYPE48", n)])
+most.harmful.5
+```
+
+```
+## [[1]]
+##          EVTYPE48 FATALITIES
+## 12 Excessive Heat       2016
+## 40        Tornado       1643
+## 20           Heat       1161
+## 14    Flash Flood       1065
+## 29      Lightning        817
+## 
+## [[2]]
+##             EVTYPE48 INJURIES
+## 40           Tornado    23303
+## 15             Flood     6794
+## 12    Excessive Heat     6680
+## 39 Thunderstorm Wind     6231
+## 29         Lightning     5232
+```
+
+
+We can see that, in the period including and after 1993, 'Tornado' was the event that caused more injuries, as most of us would pehaps expect.
+
+What came as a surprise is that 'Excessive Heat' caused more fatalities in the same period (followed by 'Tornado' events). If we add to this number those 'Heat'-caused fatalities (first list's  3rd line), we'll have more than 3,100 heat-related fatalities, almost twice as much as 'Tornado' fatalities.
+
+Let's investigate this a little further.
+
+
+```r
+heat.related = storm.agg.93$EVTYPE48 == "Excessive Heat" | storm.agg.93$EVTYPE48 == 
+    "Heat"
+
+library(ggplot2)
+ggplot(storm.agg.93[heat.related, ], aes(x = as.factor(YEAR), y = FATALITIES)) + 
+    geom_bar(stat = "identity", fill = "darkolivegreen3") + labs(title = "Heat-related fatalities (1993-2011)", 
+    x = "Year", y = expression("Fatalities")) + guides(fill = FALSE) + theme_minimal() + 
+    theme(plot.title = element_text(size = 18, face = "bold"), panel.grid.major.x = element_blank(), 
+        panel.grid.minor.x = element_blank())
+```
+
+![plot of chunk heatrelated](figure/heatrelated.png) 
+
+
+Look at the barplot above. Why is the number of 1995 heat-related fatalities so high? Let's check which states had more fatalities that year.
+
+
+```r
+states.heat = aggregate(FATALITIES ~ STATE, data = subset(storm.agg.93, heat.related & 
+    YEAR == 1995), sum)
+states.heat = states.heat[order(states.heat$FATALITIES, decreasing = TRUE), 
+    ]
+head(states.heat, 5)
+```
+
+```
+##    STATE FATALITIES
+## 12    IL        626
+## 29    PA        198
+## 38    WI         67
+## 21    MO         34
+## 24    NJ         20
+```
+
+We can see that Illinois was the state with the greatest number of heat-related fatalities in 1995. Searching on the internet, we find that it corresponds to the so-called "1995 Chicago heat wave". According to [Wikipedia](http://en.wikipedia.org/wiki/1995_Chicago_heat_wave), this heat wave "led to approximately 750 heat-related deaths in Chicago over a period of five days. Most of the victims of the heatwave were elderly poor residents of the inner city, who could not afford air conditioning and did not open windows or sleep outside for fear of crime."
+
+
 ## Results
